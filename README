@@ -1,0 +1,1 @@
+Capoeira is a small server, written in python, which returns nearby concerts by artists similar to the queried artist. It may eventually become more full featured, but currently its only function is to provide a test platform with which to learn Twisted. If you see any bad / improperly used code, specifically pertaining to twisted, please let me know.
