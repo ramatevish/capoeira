@@ -1,11 +1,11 @@
 from __future__ import print_function
+from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from twisted.internet.protocol import ServerFactory
 from twisted.web.client import Agent, getPage
 from twisted.protocols import basic
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
-from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
-from copy import copy
+from pprint import pprint
 import json
 import sys
 
@@ -19,18 +19,11 @@ class CapoeiraService(object):
     def __init__(self, lastFMInterface, songkickInterface):
         self.lastFMInterface = lastFMInterface
         self.songkickInterface = songkickInterface
-        self.interfaceMap = {'lastfm': self.lastFMInterface,
-                             'songkick': self.songkickInterface}
-
-    def buildQuery(self, interface, paramDict):
-        mergedDict = copy(interface.defaultDict)
-        mergedDict.update(paramDict)
-        paramString = ['{}={}'.format(param, val) for param, val in mergedDict.iteritems()]
-        return interface.baseURL + '&'.join(paramString)
 
     def query(self, interface, paramDict):
-        queryString = self.buildQuery(interface, paramDict)
-        return getPage(queryString).addCallbacks(callback=json.loads, errback=failed).addCallback(print)
+        queryString = interface.buildQuery(paramDict)
+        return getPage(queryString).addCallbacks(callback=json.loads, errback=failed).addCallback(pprint)
+
 
 class CapoeiraProtocol(basic.LineReceiver):
 

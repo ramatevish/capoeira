@@ -1,12 +1,13 @@
+from api import APIInterface
 
 
-class LastFMInterface(object):
+class LastFMInterface(APIInterface):
 
     def __init__(self, apiKey):
         self.apiKey = apiKey
-        self.defaultDict = {'api_key': self.apiKey,
+        self.defaultDict = {'baseURL': "http://ws.audioscrobbler.com/2.0/?",
+                            'api_key': self.apiKey,
                             'format': 'json'}
-        self.baseURL = "http://ws.audioscrobbler.com/2.0/?"
 
     def artistGetSimilar(self, artist, limit=-1, autocorrect=0):
         paramDict = {'method': 'artist.getsimilar',

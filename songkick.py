@@ -1,11 +1,13 @@
+from api import APIInterface
 import datetime
 
 
-class SongkickInterface(object):
+class SongkickInterface(APIInterface):
+
     def __init__(self, apiKey):
         self.apiKey = apiKey
-        self.defaultDict = {'apikey': self.apiKey}
-        self.baseURL = "http://api.songkick.com/api/3.0/events.json?"
+        self.defaultDict = {'baseURL': "http://api.songkick.com/api/3.0/events.json?",
+                            'apikey': self.apiKey}
 
     def upcomingEvents(self,
                        artist,
