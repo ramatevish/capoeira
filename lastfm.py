@@ -9,14 +9,14 @@ class LastFMInterface(APIInterface):
                             'api_key': self.apiKey,
                             'format': 'json'}
 
-    def artistGetSimilar(self, artist, limit=-1, autocorrect=0):
+    def artistGetSimilar(self, artist, limit=1, autocorrect=0):
         paramDict = {'method': 'artist.getsimilar',
                      'artist': artist,
                      'limit': limit,
                      'autocorrect': autocorrect}
         return paramDict
 
-    def trackGetSimilar(self, track, artist, limit=-1, autocorrect=0):
+    def trackGetSimilar(self, track, artist, limit=1, autocorrect=0):
         paramDict = {'method': 'track.getsimilar',
                      'track': track,
                      'artist': artist,
