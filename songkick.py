@@ -11,7 +11,7 @@ class SongkickInterface(APIInterface):
 
     def upcomingEvents(self,
                        artist,
-                       location,
+                       location='clientip',
                        minDate=datetime.datetime.now().strftime("%Y-%m-%d"),
                        maxDate=(datetime.datetime.now() + datetime.timedelta(days=3)).strftime("%Y-%m-%d")):
         paramDict = {'artist_name': artist,
