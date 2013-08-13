@@ -1,24 +1,32 @@
 from __future__ import print_function
-from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from twisted.internet.protocol import ServerFactory
+from twisted.internet.defer import Deferred, DeferredList, deferredGenerator
 from twisted.web.client import Agent, getPage
 from twisted.protocols import basic
+from twisted.application import service
+from txjsonrpc.web import jsonrpc
+
+from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
+
 from pprint import pprint
 import json
-import sys
+from sys import stderr
+from datetime import timedelta
+from datetime import datetime
+from collections import namedtuple
 
 
-def failed(err):
-    sys.stderr.write(err)
+CacheEntry = namedtuple("CacheEntry", ["response", "interface", "timestamp"])
 
 
-class CapoeiraService(object):
+class CapoeiraService(service.Service):
 
     def __init__(self, lastFMInterface, songkickInterface):
         self.lastFMInterface = lastFMInterface
         self.songkickInterface = songkickInterface
+        self.cache = dict()
 
     def addToCache(self, queryString, interface, response):
         if queryString in self.cache:
@@ -45,8 +53,8 @@ class CapoeiraService(object):
 
 class CapoeiraProtocol(basic.LineReceiver):
 
-    def lineReceived(self, request):
-        self.getSimilarRequestRecieved(request)
+    def lineReceived(self, line):
+        self.execute(line)
 
     def execute(self, line):
         try:
@@ -65,7 +73,6 @@ class CapoeiraProtocol(basic.LineReceiver):
                                         self.factory.service.songkickInterface,
                                         self.factory.service.songkickInterface.upcomingEvents(args),
                                         lambda result: self.sendLine(str(result)))
-
             if interface == 'c':
                 from twisted.internet import reactor
                 print('called {}'.format(line))
