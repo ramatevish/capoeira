@@ -1,6 +1,6 @@
 from __future__ import print_function
 from twisted.internet.protocol import ServerFactory
-from twisted.internet.defer import Deferred, DeferredList
+from twisted.internet.defer import Deferred, DeferredList, deferredGenerator
 from twisted.web.client import Agent, getPage
 from twisted.protocols import basic
 from twisted.application import service
@@ -29,6 +29,9 @@ class CapoeiraService(service.Service):
         self.cache = dict()
 
     def addToCache(self, queryString, interface, response):
+        if queryString in self.cache:
+            print("deleting {} from cache".format(queryString))
+            del self.cache[queryString]
         print("adding {} to cache".format(queryString))
         self.cache[queryString] = CacheEntry(response, interface, datetime.now())
         return response
@@ -36,24 +39,17 @@ class CapoeiraService(service.Service):
     def deferredQuery(self, interface, paramDict):
         queryString = interface.buildQuery(paramDict)
         print("Query: " + queryString)
-        if queryString in self.cache:
-            cacheEntry = self.cache[queryString]
-            if (cacheEntry.timestamp + timedelta(hours=24)) > datetime.now():
-                return Deferred.addCallback(lambda _: cacheEntry.response)
-            else:
-                del self.cache[queryString]
-                return (getPage(queryString).addCallbacks(callback=json.loads,
-                                                          errback=stderr.write)
-                                            .addCallback(lambda response: self.addToCache(queryString, interface, response)))
+        if (queryString in self.cache) and (self.cache[queryString].timestamp + timedelta(hours=24)) > datetime.now():
+            deferred = Deferred()
+            deferred.callback(self.cache[queryString].response)
+            return (deferred.addCallback(print)) 
         else:
             return (getPage(queryString).addCallbacks(callback=json.loads,
                                                       errback=stderr.write)
                                         .addCallbacks(callback=lambda response: self.addToCache(queryString, interface, response),
-                                                          errback=stderr.write)
-                                        .addCallback(pprint))
+                                                      errback=stderr.write)
+                                        .addCallback(print))
 
-    def findSimilarInArea(self):
-        callbacks = DeferredList()
 
 class CapoeiraProtocol(basic.LineReceiver):
 
@@ -61,20 +57,36 @@ class CapoeiraProtocol(basic.LineReceiver):
         self.execute(line)
 
     def execute(self, line):
-        interface, command, args = line.split(' ')
-        if interface == 'lastfm':
+        interface, args = line.split(' ')
+        if interface == 'l':
             from twisted.internet import reactor
             print('called {}'.format(line))
             reactor.callWhenRunning(self.factory.service.deferredQuery,
                                     self.factory.service.lastFMInterface,
                                     self.factory.service.lastFMInterface.artistGetSimilar(args))
-        if interface == 'songkick':
+        if interface == 's':
             from twisted.internet import reactor
             print('called {}'.format(line))
             reactor.callWhenRunning(self.factory.service.deferredQuery,
                                     self.factory.service.songkickInterface,
                                     self.factory.service.songkickInterface.upcomingEvents(args))
 
+        if interface == 'c':
+            from twisted.internet import reactor
+            print('called {}'.format(line))
+            deferred = self.factory.service.deferredQuery(self.factory.service.lastFMInterface, self.factory.service.lastFMInterface.artistGetSimilar(args))
+            deferred.addErrback(stderr.write)
+            deferred.addCallback(self.deferredSimilarArtistsList)
+            deferred.addCallback(lambda li: reactor.callWhenRunning(lambda _: li, None))
+            deferred.addCallback(lambda _: print("derp"))
+            reactor.callWhenRunning(lambda _: deferred, None)
+
+    def deferredSimilarArtistsList(self, query):
+        artistNameList = [artist['name'] for artist in query['similarartists']['artist']]
+        deferredList = DeferredList([getPage(self.factory.service.songkickInterface.upcomingEvents(artistName))
+                             .addCallbacks(callback=print,
+                                           errback=stderr.write)
+                            for artistName in artistNameList])
 
 class CapoeiraFactory(ServerFactory):
 
