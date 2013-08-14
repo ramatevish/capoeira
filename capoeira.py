@@ -19,6 +19,7 @@ from sys import stderr
 from datetime import timedelta
 from datetime import datetime
 from collections import namedtuple
+import atexit
 
 
 CacheEntry = namedtuple("CacheEntry", ["response", "interface", "timestamp"])
@@ -29,39 +30,42 @@ class CapoeiraService(service.Service):
     def __init__(self, lastFMInterface, songkickInterface):
         self.lastFMInterface = lastFMInterface
         self.songkickInterface = songkickInterface
+
+        # load cache if it exists, else create empty dict
         if os.path.exists('./cache'):
             cacheFile = open('./cache')
             self.cache = pickle.load(cacheFile)
             cacheFile.close()
         else:
             self.cache = dict()
-
-    def __del__(self):
-        cacheFile = open('./cache', 'w')
-        pickle.dump(self.cache, cacheFile)
-        cacheFile.close()
-
+        atexit.register(lambda: pickle.dump(self.cache, open('./cache', 'w')))
 
     def addToCache(self, queryString, interface, response):
         if queryString in self.cache:
             print("deleting {} from cache".format(queryString))
             del self.cache[queryString]
         print("adding {} to cache".format(queryString))
-        self.cache[queryString] = CacheEntry(response, interface, datetime.now())
+        self.cache[queryString] = CacheEntry(response,
+                                             interface,
+                                             datetime.now())
         return response
 
     def deferredQuery(self, interface, paramDict, consumingCallback=print):
         queryString = interface.buildQuery(paramDict)
-        print("Query: " + queryString)
-        if (queryString in self.cache) and (self.cache[queryString].timestamp + timedelta(hours=24)) > datetime.now():
+        print("query: " + queryString)
+        if (queryString in self.cache) and (self.cache[queryString].timestamp
+                                            + timedelta(hours=24)) > datetime.now():
             deferred = Deferred()
             deferred.callback(self.cache[queryString].response)
-            return (deferred.addCallback(consumingCallback)) 
+            return deferred.addCallback(consumingCallback)
         else:
             return (getPage(queryString).addCallback(printSize)
                                         .addCallbacks(callback=json.loads,
                                                       errback=stderr.write)
-                                        .addCallbacks(callback=lambda response: self.addToCache(queryString, interface, response),
+                                        .addCallbacks(callback=lambda response:
+                                                        self.addToCache(queryString,
+                                                                        interface,
+                                                                        response),
                                                       errback=stderr.write)
                                         .addCallback(consumingCallback))
 
@@ -116,7 +120,7 @@ class CapoeiraProtocol(basic.LineReceiver):
             self.sendLine(str(err))
 
     def deferredSimilarArtistsList(self, query, consumingCallback):
-        artistNameList = [cleanString(query['similarartists']['artist'][index]['name']) 
+        artistNameList = [cleanString(query['similarartists']['artist'][index]['name'])
                           for index in range(len(query['similarartists']['artist']))]
         deferredList = DeferredList([self.factory.service.deferredQuery(self.factory.service.songkickInterface,
                                                                         self.factory.service.songkickInterface.upcomingEvents(artistName),
@@ -125,9 +129,10 @@ class CapoeiraProtocol(basic.LineReceiver):
         return deferredList.addCallback(consumingCallback)
 
     def mergeResults(self, results):
-        results = [callbackResult[1]['resultsPage']['results'] for callbackResult in results if callbackResult[0] == True]
+        results = [callbackResult[1]['resultsPage']['results'] for callbackResult in results if callbackResult[0] is True]
         resultsList = reduce(lambda x, y: x + list(y.itervalues()), results, [])
         print(resultsList)
+
 
 class CapoeiraFactory(ServerFactory):
 
