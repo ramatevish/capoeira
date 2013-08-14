@@ -9,6 +9,7 @@ from txjsonrpc.web import jsonrpc
 from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
+from util import printSize, printMessage, cleanString
 
 from pprint import pprint
 import json
@@ -44,11 +45,20 @@ class CapoeiraService(service.Service):
             deferred.callback(self.cache[queryString].response)
             return (deferred.addCallback(consumingCallback)) 
         else:
-            return (getPage(queryString).addCallbacks(callback=json.loads,
+            return (getPage(queryString).addCallback(printSize)
+                                        .addCallbacks(callback=json.loads,
                                                       errback=stderr.write)
                                         .addCallbacks(callback=lambda response: self.addToCache(queryString, interface, response),
                                                       errback=stderr.write)
                                         .addCallback(consumingCallback))
+
+    def query(self, interface, paramDict, consumingCallback=print):
+        from twisted.internet import reactor
+        deferred = self.factory.service.deferredQuery(interface,
+                                                      paramDict,
+                                                      consumingCallback)
+        reactor.callWhenRunning(lambda _: deferred)
+        return deferred
 
 
 class CapoeiraProtocol(basic.LineReceiver):
@@ -56,42 +66,55 @@ class CapoeiraProtocol(basic.LineReceiver):
     def lineReceived(self, line):
         self.execute(line)
 
+    def tee(self, line):
+        strLine = str(line)
+        print(strLine)
+        self.sendLine(strLine)
+        return line
+
     def execute(self, line):
         try:
-            interface, args = line.split(' ')
+            interface, args = line.split(' ', 1)
+            args = cleanString(args)
             if interface == 'l':
                 from twisted.internet import reactor
                 print('called {}'.format(line))
                 reactor.callWhenRunning(self.factory.service.deferredQuery,
                                         self.factory.service.lastFMInterface,
                                         self.factory.service.lastFMInterface.artistGetSimilar(args),
-                                        lambda result: self.sendLine(str(result)))
+                                        self.tee)
             if interface == 's':
                 from twisted.internet import reactor
                 print('called {}'.format(line))
                 reactor.callWhenRunning(self.factory.service.deferredQuery,
                                         self.factory.service.songkickInterface,
                                         self.factory.service.songkickInterface.upcomingEvents(args),
-                                        lambda result: self.sendLine(str(result)))
+                                        self.tee)
             if interface == 'c':
                 from twisted.internet import reactor
                 print('called {}'.format(line))
-                deferred = self.factory.service.deferredQuery(self.factory.service.lastFMInterface, self.factory.service.lastFMInterface.artistGetSimilar(args))
-                deferred.addErrback(stderr.write)
-                deferred.addCallback(self.deferredSimilarArtistsList)
-                deferred.addCallback(lambda li: reactor.callWhenRunning(lambda _: li, None))
-                deferred.addCallback(lambda _: print("derp"))
+                deferred = self.factory.service.deferredQuery(self.factory.service.lastFMInterface,
+                                                              self.factory.service.lastFMInterface.artistGetSimilar(args),
+                                                              self.tee)
+                deferred.addCallback(lambda response: self.deferredSimilarArtistsList(response, self.mergeResults))
                 reactor.callWhenRunning(lambda _: deferred, None)
+
         except Exception as err:
-            print(err)
+            self.sendLine(str(err))
 
-    def deferredSimilarArtistsList(self, query):
-        artistNameList = [artist['name'] for artist in query['similarartists']['artist']]
-        deferredList = DeferredList([getPage(self.factory.service.songkickInterface.upcomingEvents(artistName))
-                             .addCallbacks(callback=print,
-                                           errback=stderr.write)
-                            for artistName in artistNameList])
+    def deferredSimilarArtistsList(self, query, consumingCallback):
+        artistNameList = [cleanString(query['similarartists']['artist'][index]['name']) 
+                          for index in range(len(query['similarartists']['artist']))]
+        deferredList = DeferredList([self.factory.service.deferredQuery(self.factory.service.songkickInterface,
+                                                                        self.factory.service.songkickInterface.upcomingEvents(artistName),
+                                                                        self.tee)
+                                     for artistName in artistNameList])
+        return deferredList.addCallback(consumingCallback)
 
+    def mergeResults(self, results):
+        results = [callbackResult[1]['resultsPage']['results'] for callbackResult in results if callbackResult[0] == True]
+        resultsList = reduce(lambda x, y: x + list(y.itervalues()), results, [])
+        print(resultsList)
 
 class CapoeiraFactory(ServerFactory):
 
