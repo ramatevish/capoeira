@@ -13,6 +13,8 @@ from util import printSize, printMessage, cleanString
 
 from pprint import pprint
 import json
+import os
+import pickle
 from sys import stderr
 from datetime import timedelta
 from datetime import datetime
@@ -27,7 +29,18 @@ class CapoeiraService(service.Service):
     def __init__(self, lastFMInterface, songkickInterface):
         self.lastFMInterface = lastFMInterface
         self.songkickInterface = songkickInterface
-        self.cache = dict()
+        if os.path.exists('./cache'):
+            cacheFile = open('./cache')
+            self.cache = pickle.load(cacheFile)
+            cacheFile.close()
+        else:
+            self.cache = dict()
+
+    def __del__(self):
+        cacheFile = open('./cache', 'w')
+        pickle.dump(self.cache, cacheFile)
+        cacheFile.close()
+
 
     def addToCache(self, queryString, interface, response):
         if queryString in self.cache:
