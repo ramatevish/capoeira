@@ -17,3 +17,12 @@ def printMessage(message):
 
 def cleanString(string):
     return urllib.quote_plus(string)
+
+
+def tee(inp):
+    print(str(inp))
+    return inp
+
+
+def wrap(deferred):
+	return lambda _: deferred
