@@ -1,17 +1,16 @@
 from __future__ import print_function
+
 from twisted.internet.protocol import ServerFactory
-from twisted.internet.defer import Deferred, DeferredList, deferredGenerator
-from twisted.web.client import Agent, getPage
+from twisted.internet.defer import Deferred, DeferredList
+from twisted.web.client import getPage
 from twisted.protocols import basic
 from twisted.application import service
-from txjsonrpc.web import jsonrpc
 
 from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
 from util import printSize, printMessage, cleanString
 
-from pprint import pprint
 import json
 import os
 import pickle
@@ -100,14 +99,14 @@ class CapoeiraProtocol(basic.LineReceiver):
                                         self.factory.service.lastFMInterface,
                                         self.factory.service.lastFMInterface.artistGetSimilar(args),
                                         self.tee)
-            if interface == 's':
+            elif interface == 's':
                 from twisted.internet import reactor
                 print('called {}'.format(line))
                 reactor.callWhenRunning(self.factory.service.deferredQuery,
                                         self.factory.service.songkickInterface,
                                         self.factory.service.songkickInterface.upcomingEvents(args),
                                         self.tee)
-            if interface == 'c':
+            elif interface == 'c':
                 from twisted.internet import reactor
                 print('called {}'.format(line))
                 deferred = self.factory.service.deferredQuery(self.factory.service.lastFMInterface,
