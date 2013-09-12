@@ -12,7 +12,7 @@ from txrestapi.methods import GET, POST, PUT, ALL
 from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
-from util import printSize, printMessage, cleanString, tee, wrap
+from util import printSize, printMessage, cleanString, tee, wrap, unwrapArgs
 
 import json
 import os
@@ -96,19 +96,17 @@ class CapoeiraService(service.Service):
         reactor.callWhenRunning(wrap(deferred))
         return deferred
 
-    def lastFMQuery(self, request):
-        print(request.args)
-        artist = request.args['artist'][0]
-        print('lastFMQuery: {}'.format(artist))
+    def lastFMQuery(self, args, call):
+        print('lastFMQuery: {}'.format(args))
         deferred = self.deferredQuery(self.lastFMInterface,
-                                      self.lastFMInterface.artistGetSimilar(artist),
+                                      call(**args),
                                       tee)
         return deferred
 
-    def songkickQuery(self, args):
+    def songkickQuery(self, args, call):
         print("songkickQuery: {}".format(args))
         deferred =  self.deferredQuery(self.songkickInterface,
-                                       self.songkickInterface.upcomingEvents(args),
+                                       call(**args),
                                        tee)
         return deferred
 
@@ -141,13 +139,29 @@ class CapoeiraAPI(APIResource):
         APIResource.__init__(self, *args, **kwargs)
         self.service = service
 
-    @POST('^/lastfm/similar_artists')
-    def lastFMQuery(self, request):
-        return str(self.service.lastFMQuery(request).result)
+    @POST('^/lastfm/artist/similar')
+    def lastFMArtistSimilar(self, request):
+        return str(self.service.lastFMQuery(unwrapArgs(request.args),
+                                            self.service.lastFMInterface.artistGetSimilar).result)
 
-    @POST('^/songkick/upcoming_events')
+    @POST('^/lastfm/track/similar')
+    def lastFMTrackSimilar(self, request):
+        return str(self.service.lastFMQuery(unwrapArgs(request.args),
+                                            self.service.lastFMInterface.trackGetSimilar).result)
+
+    @POST('^/lastfm/tag/similar')
+    def lastFMTagSimilar(self, request):
+        return str(self.service.lastFMQuery(unwrapArgs(request.args),
+                                            self.service.lastFMInterface.tagGetSimilar).result)
+
+    @POST('^/songkick/events/upcoming')
     def songkickQuery(self, request):
-        return str(self.service.songkickQuery(request).result)
+        return str(self.service.songkickQuery(unwrapArgs(request.args),
+                                              self.service.songkickInterface.upcomingEvents).result)
+
+    @POST('^/capoeira/events/similar')
+    def capoeiraQuery(self, request):
+        return str(self.service.combineQuery(unwrapArgs(request.args)).result)
 
     @ALL('^/')
     def missedEndpoints(self, request):

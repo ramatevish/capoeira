@@ -26,3 +26,9 @@ def tee(inp):
 
 def wrap(deferred):
 	return lambda _: deferred
+
+
+def unwrapArgs(argDict):
+	unwrappedDict = dict()
+	[unwrappedDict.setdefault(key, val[0]) for key, val in argDict.iteritems()]
+	return unwrappedDict
