@@ -13,7 +13,7 @@ class SongkickInterface(APIInterface):
                        artist,
                        location='sk:26330',
                        minDate=datetime.datetime.now().strftime("%Y-%m-%d"),
-                       maxDate=(datetime.datetime.now() + datetime.timedelta(days=3)).strftime("%Y-%m-%d")):
+                       maxDate=(datetime.datetime.now() + datetime.timedelta(days=15)).strftime("%Y-%m-%d")):
         paramDict = {'artist_name': artist,
                      'location': location,
                      'min_date': minDate,

@@ -1,9 +1,7 @@
 from __future__ import print_function
 
 from twisted.application import service
-from twisted.internet.protocol import ServerFactory
 from twisted.internet.defer import Deferred, DeferredList
-from twisted.protocols import basic
 from twisted.web.client import getPage
 from twisted.web.server import Site
 from txrestapi.resource import APIResource
@@ -12,7 +10,7 @@ from txrestapi.methods import GET, POST, PUT, ALL
 from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
-from util import printSize, printMessage, cleanString, tee, wrap, unwrapArgs
+from util import printSize, cleanString, tee, wrap, unwrapArgs, pipe
 
 import json
 import os
@@ -25,6 +23,10 @@ import atexit
 
 
 CacheEntry = namedtuple("CacheEntry", ["response", "interface", "timestamp"])
+"""CacheEntry is a named tuple containing a response field, which stores the
+remote API server's response, an interface field, containing which API
+interface was queried, and a timestamp field which contains the time the
+response was recieved"""
 
 
 class CapoeiraService(service.Service):
@@ -60,11 +62,10 @@ class CapoeiraService(service.Service):
     def deferredQuery(self, interface, paramDict, consumingCallback=print):
         """
         deferredQuery constructs API calls via implemented API interfaces,
-        taking care of loading JSON responses and caching, as well as
+        taking care of loading responses and caching, as well as
         optionally passing the results to a consuming callback function
         """
         queryString = interface.buildQuery(paramDict)
-        print("query: " + queryString)
 
         # if we have a recent cached version, echo and consume it
         if (queryString in self.cache) and (self.cache[queryString].timestamp
@@ -77,10 +78,9 @@ class CapoeiraService(service.Service):
             return (getPage(queryString).addCallback(printSize)
                                         .addCallbacks(callback=json.loads,
                                                       errback=stderr.write)
-                                        .addCallbacks(callback=lambda response:
-                                                        self.addToCache(queryString,
-                                                                        interface,
-                                                                        response),
+                                        .addCallbacks(callback=lambda response: self.addToCache(queryString,
+                                                                                                interface,
+                                                                                                response),
                                                       errback=stderr.write)
                                         .addCallback(consumingCallback))
 
@@ -97,40 +97,42 @@ class CapoeiraService(service.Service):
         return deferred
 
     def lastFMQuery(self, args, call):
-        print('lastFMQuery: {}'.format(args))
         deferred = self.deferredQuery(self.lastFMInterface,
                                       call(**args),
-                                      tee)
+                                      pipe)
         return deferred
 
     def songkickQuery(self, args, call):
-        print("songkickQuery: {}".format(args))
-        deferred =  self.deferredQuery(self.songkickInterface,
-                                       call(**args),
-                                       tee)
+        deferred = self.deferredQuery(self.songkickInterface,
+                                      call(**args),
+                                      pipe)
         return deferred
 
-    def combineQuery(self, args):
-        print("combineQuery: {}".format(args))
+    def combineQuery(self, args, consumingCallback=pipe):
         deferred = self.deferredQuery(self.lastFMInterface,
-                                      self.lastFMInterface.artistGetSimilar(args),
-                                      tee)
-        deferred.addCallback(lambda response: self.deferredSimilarArtistsList(response, self.mergeResults))
+                                      self.lastFMInterface.artistGetSimilar(**args),
+                                      consumingCallback)
+        deferred.addCallback(lambda response: self.similarArtistsDeferredList(response, self.mergeResults))
         return deferred
 
-    def deferredSimilarArtistsList(self, query, consumingCallback):
+    def similarArtistsDeferredList(self, query, consumingCallback):
         artistNameList = [cleanString(query['similarartists']['artist'][index]['name'])
                           for index in range(len(query['similarartists']['artist']))]
         deferredList = DeferredList([self.deferredQuery(self.songkickInterface,
                                                         self.songkickInterface.upcomingEvents(artistName),
-                                                        tee)
+                                                        pipe)
                                      for artistName in artistNameList])
         return deferredList.addCallback(consumingCallback)
 
     def mergeResults(self, results):
+        # pull out the results from the DeferredList and remove duplicate events
         results = [callbackResult[1]['resultsPage']['results'] for callbackResult in results if callbackResult[0] is True]
-        resultsList = reduce(lambda x, y: x + list(y.itervalues()), results, [])
-        print(resultsList)
+        merged = {}
+        for result in results:
+            if 'event' in result:
+                for event in result['event']:
+                    merged.update({event['id']: event})
+        return merged
 
 
 class CapoeiraAPI(APIResource):
@@ -139,29 +141,40 @@ class CapoeiraAPI(APIResource):
         APIResource.__init__(self, *args, **kwargs)
         self.service = service
 
+    def formatOutput(self, d):
+        return """<html>
+                  <body>
+                  <pre>
+                  <code>
+                  {}
+                  </code>
+                  </pre>
+                  </body>
+                  </html>""".format(str(json.dumps(d, indent=4)))
+
     @POST('^/lastfm/artist/similar')
     def lastFMArtistSimilar(self, request):
-        return str(self.service.lastFMQuery(unwrapArgs(request.args),
-                                            self.service.lastFMInterface.artistGetSimilar).result)
+        return self.formatOutput(self.service.lastFMQuery(unwrapArgs(request.args),
+                                                          self.service.lastFMInterface.artistGetSimilar).result)
 
     @POST('^/lastfm/track/similar')
     def lastFMTrackSimilar(self, request):
-        return str(self.service.lastFMQuery(unwrapArgs(request.args),
-                                            self.service.lastFMInterface.trackGetSimilar).result)
+        return self.formatOutput(self.service.lastFMQuery(unwrapArgs(request.args),
+                                                          self.service.lastFMInterface.trackGetSimilar).result)
 
     @POST('^/lastfm/tag/similar')
     def lastFMTagSimilar(self, request):
-        return str(self.service.lastFMQuery(unwrapArgs(request.args),
-                                            self.service.lastFMInterface.tagGetSimilar).result)
+        return self.formatOutput(self.service.lastFMQuery(unwrapArgs(request.args),
+                                                          self.service.lastFMInterface.tagGetSimilar).result)
 
     @POST('^/songkick/events/upcoming')
     def songkickQuery(self, request):
-        return str(self.service.songkickQuery(unwrapArgs(request.args),
-                                              self.service.songkickInterface.upcomingEvents).result)
+        return self.formatOutput(self.service.songkickQuery(unwrapArgs(request.args),
+                                                            self.service.songkickInterface.upcomingEvents).result)
 
-    @POST('^/capoeira/events/similar')
+    @POST('^/capoeira/events/artist')
     def capoeiraQuery(self, request):
-        return str(self.service.combineQuery(unwrapArgs(request.args)).result)
+        return self.formatOutput(self.service.combineQuery(unwrapArgs(request.args)).result)
 
     @ALL('^/')
     def missedEndpoints(self, request):
@@ -172,7 +185,7 @@ def main():
     lastFMInterface = LastFMInterface(LASTFM_API_KEY)
     songkickInterface = SongkickInterface(SONGKICK_API_KEY)
     capoeiraService = CapoeiraService(lastFMInterface, songkickInterface)
-    
+
     from twisted.internet import reactor
 
     api = CapoeiraAPI(capoeiraService)
