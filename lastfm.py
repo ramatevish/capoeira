@@ -5,8 +5,8 @@ class LastFMInterface(APIInterface):
 
     def __init__(self, apiKey):
         self.apiKey = apiKey
-        self.defaultDict = {'baseURL': "http://ws.audioscrobbler.com/2.0/?",
-                            'api_key': self.apiKey,
+        self.baseURL = "http://ws.audioscrobbler.com/2.0/?"
+        self.defaultDict = {'api_key': self.apiKey,
                             'format': 'json'}
 
     def artistGetSimilar(self, artist, limit=100, autocorrect=0):

@@ -1,16 +1,17 @@
 from __future__ import print_function
 
 from twisted.application import service
-from twisted.internet.defer import Deferred, DeferredList
+from twisted.internet.defer import DeferredList, inlineCallbacks, returnValue
 from twisted.web.client import getPage
+from twisted.web.resource import NoResource
 from twisted.web.server import Site
 from txrestapi.resource import APIResource
-from txrestapi.methods import GET, POST, PUT, ALL
+from txrestapi.methods import GET, ALL
 
-from config import LASTFM_API_KEY, LASTFM_SECRET_KEY, SONGKICK_API_KEY
+from config import LASTFM_API_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
-from util import printSize, cleanString, tee, wrap, unwrapArgs, pipe
+from util import printSize, cleanString, wrap, unwrapArgs, formatResponse
 
 import json
 import os
@@ -59,7 +60,8 @@ class CapoeiraService(service.Service):
                                              datetime.now())
         return response
 
-    def deferredQuery(self, interface, paramDict, consumingCallback=print):
+    @inlineCallbacks
+    def deferredQuery(self, interface, paramDict):
         """
         deferredQuery constructs API calls via implemented API interfaces,
         taking care of loading responses and caching, as well as
@@ -70,19 +72,18 @@ class CapoeiraService(service.Service):
         # if we have a recent cached version, echo and consume it
         if (queryString in self.cache) and (self.cache[queryString].timestamp
                                             + timedelta(hours=24)) > datetime.now():
-            deferred = Deferred()
-            deferred.callback(self.cache[queryString].response)
-            return deferred.addCallback(consumingCallback)
-        # otherwise, fetch, load it, cache it, and consume it
-        else:
-            return (getPage(queryString).addCallback(printSize)
-                                        .addCallbacks(callback=json.loads,
-                                                      errback=stderr.write)
-                                        .addCallbacks(callback=lambda response: self.addToCache(queryString,
-                                                                                                interface,
-                                                                                                response),
-                                                      errback=stderr.write)
-                                        .addCallback(consumingCallback))
+            response = self.cache[queryString].response
+            parsed = json.loads(response)
+        else:  # otherwise, fetch, load it, cache it, and consume it
+            response = yield getPage(queryString)
+            printSize(response)
+            try:
+                parsed = json.loads(response)
+            except ValueError as e:
+                stderr.write(str(e))
+                raise e
+            self.addToCache(queryString, interface, response)
+        returnValue(parsed)
 
     def query(self, interface, paramDict, consumingCallback=print):
         """
@@ -90,48 +91,66 @@ class CapoeiraService(service.Service):
         returned by deferredQuery
         """
         from twisted.internet import reactor
-        deferred = self.deferredQuery(interface,
-                                      paramDict,
-                                      consumingCallback)
+        deferred = self.deferredQuery(interface, paramDict, consumingCallback)
         reactor.callWhenRunning(wrap(deferred))
         return deferred
 
-    def lastFMQuery(self, args, call):
-        deferred = self.deferredQuery(self.lastFMInterface,
-                                      call(**args),
-                                      pipe)
-        return deferred
+    def lastFMQuery(self, args, fmCall):
+        return self.deferredQuery(self.lastFMInterface, fmCall(**args))
 
-    def songkickQuery(self, args, call):
-        deferred = self.deferredQuery(self.songkickInterface,
-                                      call(**args),
-                                      pipe)
-        return deferred
+    def songkickQuery(self, args, skCall):
+        return self.deferredQuery(self.songkickInterface, skCall(**args))
 
-    def combineQuery(self, args, consumingCallback=pipe):
-        deferred = self.deferredQuery(self.lastFMInterface,
-                                      self.lastFMInterface.artistGetSimilar(**args),
-                                      consumingCallback)
-        deferred.addCallback(lambda response: self.similarArtistsDeferredList(response, self.mergeResults))
-        return deferred
+    @inlineCallbacks
+    def eventsBySimilarArtistsQuery(self, args):
+        response = yield self.deferredQuery(self.lastFMInterface, self.lastFMInterface.artistGetSimilar(**args))
+        try:
+            artistNameList = [cleanString(response['similarartists']['artist'][index]['name'])
+                              for index in range(len(response['similarartists']['artist']))]
+            similarArtistList = DeferredList([self.deferredQuery(self.songkickInterface,
+                                                                 self.songkickInterface.upcomingEvents(artistName))
+                                              for artistName in artistNameList])
+        except Exception as e:
+            similarArtistList = None
+        try:
+            similar = yield similarArtistList.result
+        except AttributeError as e:
+            similar = None
+        merged = self.mergeResults(similar)
+        final = {'events': merged}
+        final['event_count'] = len(merged)
+        returnValue(formatResponse(final))
 
-    def similarArtistsDeferredList(self, query, consumingCallback):
-        artistNameList = [cleanString(query['similarartists']['artist'][index]['name'])
-                          for index in range(len(query['similarartists']['artist']))]
-        deferredList = DeferredList([self.deferredQuery(self.songkickInterface,
-                                                        self.songkickInterface.upcomingEvents(artistName),
-                                                        pipe)
-                                     for artistName in artistNameList])
-        return deferredList.addCallback(consumingCallback)
+    @inlineCallbacks
+    def eventsBySimilarTracksQuery(self, args):
+        response = yield self.deferredQuery(self.lastFMInterface, self.lastFMInterface.trackGetSimilar(**args))
+        artistNameList = [cleanString(response['similarartists']['artist'][index]['name'])
+                          for index in range(len(response['similarartists']['artist']))]
+        similarArtistList = DeferredList([self.deferredQuery(self.songkickInterface,
+                                                             self.songkickInterface.upcomingEvents(artistName))
+                                          for artistName in artistNameList])
+        try:
+            similar = yield similarArtistList.result
+        except AttributeError as e:
+            similar = None
+        merged = self.mergeResults(similar)
+        final = {'events': merged}
+        final['event_count'] = len(merged)
+        returnValue(formatResponse(final))
 
     def mergeResults(self, results):
+        merged = []
+        if not results:
+            return merged
         # pull out the results from the DeferredList and remove duplicate events
         results = [callbackResult[1]['resultsPage']['results'] for callbackResult in results if callbackResult[0] is True]
-        merged = {}
+        ids = set()
         for result in results:
             if 'event' in result:
                 for event in result['event']:
-                    merged.update({event['id']: event})
+                    if event['id'] not in ids:
+                        merged.append(event)
+                        ids.add(event['id'])
         return merged
 
 
@@ -141,40 +160,55 @@ class CapoeiraAPI(APIResource):
         APIResource.__init__(self, *args, **kwargs)
         self.service = service
 
-    def formatOutput(self, d):
-        return """<html>
-                  <body>
-                  <pre>
-                  <code>
-                  {}
-                  </code>
-                  </pre>
-                  </body>
-                  </html>""".format(str(json.dumps(d, indent=4)))
+    @inlineCallbacks
+    def _makeServiceRequest(self, request, apiQuery, apiMethod):
+        response = yield apiQuery(unwrapArgs(request.args), apiMethod)
+        page = formatResponse(response)
+        returnValue(page)
 
-    @POST('^/lastfm/artist/similar')
+    def _checkResponse(self, response):
+        if hasattr(response, 'result'):
+            return response.result
+        else:
+            return NoResource()
+
+    @GET('^/lastfm/artist/similar')
     def lastFMArtistSimilar(self, request):
-        return self.formatOutput(self.service.lastFMQuery(unwrapArgs(request.args),
-                                                          self.service.lastFMInterface.artistGetSimilar).result)
+        response = self._makeServiceRequest(request,
+                                            self.service.lastFMQuery,
+                                            self.service.lastFMInterface.artistGetSimilar)
+        return self._checkResponse(response)
 
-    @POST('^/lastfm/track/similar')
+    @GET('^/lastfm/track/similar')
     def lastFMTrackSimilar(self, request):
-        return self.formatOutput(self.service.lastFMQuery(unwrapArgs(request.args),
-                                                          self.service.lastFMInterface.trackGetSimilar).result)
+        response = self._makeServiceRequest(request,
+                                            self.service.lastFMQuery,
+                                            self.service.lastFMInterface.trackGetSimilar)
+        return self._checkResponse(response)
 
-    @POST('^/lastfm/tag/similar')
+    @GET('^/lastfm/tag/similar')
     def lastFMTagSimilar(self, request):
-        return self.formatOutput(self.service.lastFMQuery(unwrapArgs(request.args),
-                                                          self.service.lastFMInterface.tagGetSimilar).result)
+        response = self._makeServiceRequest(request,
+                                            self.service.lastFMQuery,
+                                            self.service.lastFMInterface.tagGetSimilar)
+        return self._checkResponse(response)
 
-    @POST('^/songkick/events/upcoming')
+    @GET('^/songkick/events/upcoming')
     def songkickQuery(self, request):
-        return self.formatOutput(self.service.songkickQuery(unwrapArgs(request.args),
-                                                            self.service.songkickInterface.upcomingEvents).result)
+        response = self._makeServiceRequest(request,
+                                            self.service.songkickQuery,
+                                            self.service.songkickInterface.upcomingEvents)
+        return self._checkResponse(response)
 
-    @POST('^/capoeira/events/artist')
-    def capoeiraQuery(self, request):
-        return self.formatOutput(self.service.combineQuery(unwrapArgs(request.args)).result)
+    @GET('^/capoeira/events/similar/artist')
+    def capoeiraSimilarByArtistQuery(self, request):
+        response = self.service.eventsBySimilarArtistsQuery(unwrapArgs(request.args))
+        return self._checkResponse(response)
+
+    @GET('^/capoeira/events/similar/track')
+    def capoeiraSimilarByTrackQuery(self, request):
+        response = self.service.eventsBySimilarTracksQuery(unwrapArgs(request.args))
+        return self._checkResponse(response)
 
     @ALL('^/')
     def missedEndpoints(self, request):

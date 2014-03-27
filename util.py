@@ -1,5 +1,6 @@
 import sys
 import urllib
+import json
 
 
 def printSize(response):
@@ -8,7 +9,7 @@ def printSize(response):
 
 
 def printMessage(message):
-    def func(reponse):
+    def func(response):
         pr = message
         print(pr)
         return response
@@ -28,6 +29,7 @@ def tee(inp):
 
 
 def pipe(inp):
+    print("pipe")
     return inp
 
 
@@ -44,3 +46,16 @@ def unwrapArgs(argDict):
     unwrappedDict = dict()
     [unwrappedDict.setdefault(key, val[0]) for key, val in argDict.iteritems()]
     return unwrappedDict
+
+
+def formatResponse(data):
+    return json.dumps(data)
+    # return """<html>
+    #           <body>
+    #           <pre>
+    #           <code>
+    #           {}
+    #           </code>
+    #           </pre>
+    #           </body>
+    #           </html>""".format(str(json.dumps(data, indent=4)))
