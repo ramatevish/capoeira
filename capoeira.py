@@ -90,12 +90,20 @@ class CapoeiraService(service.Service):
 
     @inlineCallbacks
     def eventsBySimilarArtistsQuery(self, args):
+        location = 'sk:26330'
+        if 'location' in args:
+            locationResponse = yield self.deferredQuery(self.songkickInterface,
+                                                        self.songkickInterface.locationByName(name=args['location']))
+
+            location = 'sk:' + str(locationResponse['resultsPage']['results']['location'][0]['metroArea']['id'])
+            del args['location']
         response = yield self.deferredQuery(self.lastFMInterface, self.lastFMInterface.artistGetSimilar(**args))
         try:
             artistNameList = [cleanString(response['similarartists']['artist'][index]['name'])
                               for index in range(len(response['similarartists']['artist']))]
             similarArtistList = DeferredList([self.deferredQuery(self.songkickInterface,
-                                                                 self.songkickInterface.upcomingEvents(artistName))
+                                                                 self.songkickInterface.upcomingEvents(artistName,
+                                                                                                       location=location))
                                               for artistName in artistNameList])
         except Exception as e:
             similarArtistList = None
@@ -110,6 +118,9 @@ class CapoeiraService(service.Service):
 
     @inlineCallbacks
     def eventsBySimilarTracksQuery(self, args):
+        if 'location' in args:
+            location = self.deferredQuery(self.songkickInterface, self.songkickLocationByName(args['location']))
+            del args['location']
         response = yield self.deferredQuery(self.lastFMInterface, self.lastFMInterface.trackGetSimilar(**args))
         artistNameList = [cleanString(response['similarartists']['artist'][index]['name'])
                           for index in range(len(response['similarartists']['artist']))]
@@ -171,6 +182,14 @@ class CapoeiraService(service.Service):
                                             self.songkickInterface.upcomingEvents)
         return response
 
+    # /songkick/location/name
+    def songkickLocationByName(self, request):
+        response = self._makeServiceRequest(request,
+                                            self.songkickQuery,
+                                            self.songkickInterface.locationByName)
+        return response
+
+
     # /capoeira/events/similar/artist
     def capoeiraSimilarByArtistQuery(self, request):
         response = self.eventsBySimilarArtistsQuery(unwrapArgs(request.args))
@@ -192,6 +211,7 @@ class CapoeiraResource(Resource):
             '/lastfm/artist/similar': self.service.lastFMArtistSimilar,
             '/lastfm/tag/similar': self.service.lastFMTagSimilar,
             '/songkick/events/upcoming': self.service.songkickUpcomingEvents,
+            '/songkick/location/name': self.service.songkickLocationByName,
             '/capoeira/events/similar/artist': self.service.capoeiraSimilarByArtistQuery,
             '/capoeira/events/similar/track': self.service.capoeiraSimilarByTrackQuery
         }

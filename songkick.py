@@ -13,9 +13,14 @@ class SongkickInterface(APIInterface):
                        artist,
                        location='sk:26330',
                        minDate=datetime.datetime.now().strftime("%Y-%m-%d"),
-                       maxDate=(datetime.datetime.now() + datetime.timedelta(days=60)).strftime("%Y-%m-%d")):
+                       maxDate=(datetime.datetime.now() + datetime.timedelta(days=120)).strftime("%Y-%m-%d")):
         paramDict = {'artist_name': artist,
                      'location': location,
                      'min_date': minDate,
                      'max_date': maxDate}
+        return paramDict
+
+    def locationByName(self, name):
+        paramDict = {'_baseURL': 'http://api.songkick.com/api/3.0/search/locations.json?',
+                     'query': name}
         return paramDict
