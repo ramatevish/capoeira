@@ -31,19 +31,20 @@ response was recieved"""
 
 class CapoeiraService(service.Service):
 
-    def __init__(self, lastFMInterface, songkickInterface):
+    def __init__(self, lastFMInterface, songkickInterface, enableCache=False):
         self.lastFMInterface = lastFMInterface
         self.songkickInterface = songkickInterface
 
-        # load cache if it exists, else create empty dict
-        if os.path.exists('./cache'):
-            cacheFile = open('./cache')
-            self.cache = pickle.load(cacheFile)
-            cacheFile.close()
-        else:
-            self.cache = dict()
-
-        atexit.register(lambda: pickle.dump(self.cache, open('./cache', 'w')))
+        self.enableCache = False
+        if enableCache:  # load cache if it exists, else create empty dict
+            self.enableCache = True
+            if os.path.exists('./cache'):
+                cacheFile = open('./cache')
+                self.cache = pickle.load(cacheFile)
+                cacheFile.close()
+            else:
+                self.cache = dict()
+            atexit.register(lambda: pickle.dump(self.cache, open('./cache', 'w')))
 
     def addToCache(self, queryString, interface, response):
         """
@@ -69,14 +70,15 @@ class CapoeiraService(service.Service):
         queryString = interface.buildQuery(paramDict)
 
         # if we have a recent cached version, echo and consume it
-        if (queryString in self.cache) and (self.cache[queryString].timestamp
-                                            + timedelta(hours=24)) > datetime.now():
+        if self.enableCache and (queryString in self.cache) and (self.cache[queryString].timestamp
+                                                                 + timedelta(hours=24)) > datetime.now():
             response = self.cache[queryString].response
             parsed = json.loads(response)
         else:  # otherwise, fetch, load it, cache it, and consume it
             response = yield getPage(queryString)
             printSize(response)
-            self.addToCache(queryString, interface, response)
+            if self.enableCache:
+                self.addToCache(queryString, interface, response)
             parsed = json.loads(response)
         returnValue(parsed)
 
@@ -231,7 +233,7 @@ class CapoeiraResource(Resource):
 def main():
     lastFMInterface = LastFMInterface(LASTFM_API_KEY)
     songkickInterface = SongkickInterface(SONGKICK_API_KEY)
-    capoeiraService = CapoeiraService(lastFMInterface, songkickInterface)
+    capoeiraService = CapoeiraService(lastFMInterface, songkickInterface, True)
 
     from twisted.internet import reactor
 
