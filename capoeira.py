@@ -6,7 +6,6 @@ from twisted.web.client import getPage
 from twisted.web.resource import Resource
 from twisted.web.server import Site, NOT_DONE_YET
 
-from config import LASTFM_API_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
 from util import printSize, cleanString, unwrapArgs, formatJSONResponse, formatHTMLResponse
@@ -15,6 +14,12 @@ from negotiator import ContentNegotiator, AcceptParameters, ContentType, Languag
 import json
 import os
 import pickle
+
+try:
+    from config import LASTFM_API_KEY, SONGKICK_API_KEY
+except ImportError:
+    LASTFM_API_KEY = os.environ['LASTFM_API_KEY']
+    SONGKICK_API_KEY = os.environ['SONGKICK_API_KEY']
 
 from datetime import timedelta
 from datetime import datetime
@@ -31,9 +36,9 @@ response was recieved"""
 
 class CapoeiraService(service.Service):
 
-    def __init__(self, lastFMInterface, songkickInterface, enableCache=False):
-        self.lastFMInterface = lastFMInterface
-        self.songkickInterface = songkickInterface
+    def __init__(self, enableCache=False):
+        self.lastFMInterface = LastFMInterface(LASTFM_API_KEY)
+        self.songkickInterface = SongkickInterface(SONGKICK_API_KEY)
 
         self.enableCache = False
         if enableCache:  # load cache if it exists, else create empty dict
@@ -229,17 +234,16 @@ class CapoeiraResource(Resource):
         else:
             return "{}"
 
-
-def main():
-    lastFMInterface = LastFMInterface(LASTFM_API_KEY)
-    songkickInterface = SongkickInterface(SONGKICK_API_KEY)
-    capoeiraService = CapoeiraService(lastFMInterface, songkickInterface, True)
-
-    from twisted.internet import reactor
-
-    factory = Site(CapoeiraResource(capoeiraService))
-    reactor.listenTCP(8080, factory)
-    reactor.run()
-
-if __name__ == '__main__':
-    main()
+#
+# def main():
+#     capoeiraService = CapoeiraService(True)
+#     capoeiraService.startService()
+#
+#     from twisted.internet import reactor
+#
+#     factory = Site(CapoeiraResource(capoeiraService))
+#     reactor.listenTCP(8080, factory)
+#     reactor.run()
+#
+# if __name__ == '__main__':
+#     main()
