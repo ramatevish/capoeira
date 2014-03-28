@@ -3,20 +3,19 @@ from __future__ import print_function
 from twisted.application import service
 from twisted.internet.defer import DeferredList, inlineCallbacks, returnValue
 from twisted.web.client import getPage
-from twisted.web.resource import NoResource
-from twisted.web.server import Site
-from txrestapi.resource import APIResource
-from txrestapi.methods import GET, ALL
+from twisted.web.resource import Resource
+from twisted.web.server import Site, NOT_DONE_YET
 
 from config import LASTFM_API_KEY, SONGKICK_API_KEY
 from lastfm import LastFMInterface
 from songkick import SongkickInterface
-from util import printSize, cleanString, wrap, unwrapArgs, formatResponse
+from util import printSize, cleanString, unwrapArgs, formatJSONResponse, formatHTMLResponse
+from negotiator import ContentNegotiator, AcceptParameters, ContentType, Language
 
 import json
 import os
 import pickle
-from sys import stderr
+
 from datetime import timedelta
 from datetime import datetime
 from collections import namedtuple
@@ -77,23 +76,9 @@ class CapoeiraService(service.Service):
         else:  # otherwise, fetch, load it, cache it, and consume it
             response = yield getPage(queryString)
             printSize(response)
-            try:
-                parsed = json.loads(response)
-            except ValueError as e:
-                stderr.write(str(e))
-                raise e
             self.addToCache(queryString, interface, response)
+            parsed = json.loads(response)
         returnValue(parsed)
-
-    def query(self, interface, paramDict, consumingCallback=print):
-        """
-        query wraps deferredQuery, automatically calling the deferred
-        returned by deferredQuery
-        """
-        from twisted.internet import reactor
-        deferred = self.deferredQuery(interface, paramDict, consumingCallback)
-        reactor.callWhenRunning(wrap(deferred))
-        return deferred
 
     def lastFMQuery(self, args, fmCall):
         return self.deferredQuery(self.lastFMInterface, fmCall(**args))
@@ -119,7 +104,7 @@ class CapoeiraService(service.Service):
         merged = self.mergeResults(similar)
         final = {'events': merged}
         final['event_count'] = len(merged)
-        returnValue(formatResponse(final))
+        returnValue(final)
 
     @inlineCallbacks
     def eventsBySimilarTracksQuery(self, args):
@@ -136,7 +121,7 @@ class CapoeiraService(service.Service):
         merged = self.mergeResults(similar)
         final = {'events': merged}
         final['event_count'] = len(merged)
-        returnValue(formatResponse(final))
+        returnValue(final)
 
     def mergeResults(self, results):
         merged = []
@@ -153,66 +138,94 @@ class CapoeiraService(service.Service):
                         ids.add(event['id'])
         return merged
 
+    def _makeServiceRequest(self, request, apiQueryFn, apiFn):
+        return apiQueryFn(unwrapArgs(request.args), apiFn)
 
-class CapoeiraAPI(APIResource):
-
-    def __init__(self, service, *args, **kwargs):
-        APIResource.__init__(self, *args, **kwargs)
-        self.service = service
-
-    @inlineCallbacks
-    def _makeServiceRequest(self, request, apiQuery, apiMethod):
-        response = yield apiQuery(unwrapArgs(request.args), apiMethod)
-        page = formatResponse(response)
-        returnValue(page)
-
-    def _checkResponse(self, response):
-        if hasattr(response, 'result'):
-            return response.result
-        else:
-            return NoResource()
-
-    @GET('^/lastfm/artist/similar')
+    # /lastfm/artist/similar
     def lastFMArtistSimilar(self, request):
         response = self._makeServiceRequest(request,
-                                            self.service.lastFMQuery,
-                                            self.service.lastFMInterface.artistGetSimilar)
-        return self._checkResponse(response)
+                                            self.lastFMQuery,
+                                            self.lastFMInterface.artistGetSimilar)
+        return response
 
-    @GET('^/lastfm/track/similar')
+    # /lastfm/track/similar
     def lastFMTrackSimilar(self, request):
         response = self._makeServiceRequest(request,
-                                            self.service.lastFMQuery,
-                                            self.service.lastFMInterface.trackGetSimilar)
-        return self._checkResponse(response)
+                                            self.lastFMQuery,
+                                            self.lastFMInterface.trackGetSimilar)
+        return response
 
-    @GET('^/lastfm/tag/similar')
+    # /lastfm/tag/similar
     def lastFMTagSimilar(self, request):
         response = self._makeServiceRequest(request,
-                                            self.service.lastFMQuery,
-                                            self.service.lastFMInterface.tagGetSimilar)
-        return self._checkResponse(response)
+                                            self.lastFMQuery,
+                                            self.lastFMInterface.tagGetSimilar)
+        return response
 
-    @GET('^/songkick/events/upcoming')
-    def songkickQuery(self, request):
+    # /songkick/events/upcoming
+    def songkickUpcomingEvents(self, request):
         response = self._makeServiceRequest(request,
-                                            self.service.songkickQuery,
-                                            self.service.songkickInterface.upcomingEvents)
-        return self._checkResponse(response)
+                                            self.songkickQuery,
+                                            self.songkickInterface.upcomingEvents)
+        return response
 
-    @GET('^/capoeira/events/similar/artist')
+    # /capoeira/events/similar/artist
     def capoeiraSimilarByArtistQuery(self, request):
-        response = self.service.eventsBySimilarArtistsQuery(unwrapArgs(request.args))
-        return self._checkResponse(response)
+        response = self.eventsBySimilarArtistsQuery(unwrapArgs(request.args))
+        return response
 
-    @GET('^/capoeira/events/similar/track')
+    # /capoeira/events/similar/track
     def capoeiraSimilarByTrackQuery(self, request):
-        response = self.service.eventsBySimilarTracksQuery(unwrapArgs(request.args))
-        return self._checkResponse(response)
+        response = self.eventsBySimilarTracksQuery(unwrapArgs(request.args))
+        return response
 
-    @ALL('^/')
-    def missedEndpoints(self, request):
-        return "Missed the endpoints, Requst:\n{}".format(str(request))
+class CapoeiraResource(Resource):
+    def __init__(self, service):
+        Resource.__init__(self)
+        self.service = service
+        self.resources = {
+            '/': lambda request: '<h1>Home</h1>Home page',
+            '/about': lambda request: '<h1>About</h1>All about me',
+            '/lastfm/track/similar': self.service.lastFMTrackSimilar,
+            '/lastfm/artist/similar': self.service.lastFMArtistSimilar,
+            '/lastfm/tag/similar': self.service.lastFMTagSimilar,
+            '/songkick/events/upcoming': self.service.songkickUpcomingEvents,
+            '/capoeira/events/similar/artist': self.service.capoeiraSimilarByArtistQuery,
+            '/capoeira/events/similar/track': self.service.capoeiraSimilarByTrackQuery
+        }
+        self.isLeaf = True
+
+        # default_params is used in lieu of a defined Accept field in the header
+        default_params = AcceptParameters(ContentType("text/html"), Language("en"))
+        acceptable = [AcceptParameters(ContentType("text/html"), Language("en")),
+                      AcceptParameters(ContentType("text/json"), Language("en")),
+                      AcceptParameters(ContentType("application/json"), Language("en"))]
+        self.contentNegotiator = ContentNegotiator(default_params, acceptable)
+        self.renderFns = {'text/html': formatHTMLResponse,
+                          'text/json': formatJSONResponse,
+                          'application/json': formatJSONResponse}
+
+    def _delayedRender(self, request, deferred, renderFn):
+        def d(_):
+            request.write(renderFn(deferred.result))
+            request.finish()
+        return d
+
+    def render_GET(self, request):
+        acceptable = self.contentNegotiator.negotiate(request.getHeader('Accept'))
+        if not acceptable:
+            # TODO: return 406
+            contentType = 'text/html'
+        else:
+            contentType = str(acceptable.content_type)
+        renderFn = self.renderFns[contentType]
+        request.setHeader("Content-Type", contentType)
+        if request.path in self.resources:
+            d = self.resources[request.path](request)
+            d.addCallback(self._delayedRender(request, d, renderFn))
+            return NOT_DONE_YET
+        else:
+            return "{}"
 
 
 def main():
@@ -222,12 +235,9 @@ def main():
 
     from twisted.internet import reactor
 
-    api = CapoeiraAPI(capoeiraService)
-    site = Site(api, timeout=None)
-    port = reactor.listenTCP(8080, site)
-
+    factory = Site(CapoeiraResource(capoeiraService))
+    reactor.listenTCP(8080, factory)
     reactor.run()
-
 
 if __name__ == '__main__':
     main()

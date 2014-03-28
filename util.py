@@ -48,14 +48,18 @@ def unwrapArgs(argDict):
     return unwrappedDict
 
 
-def formatResponse(data):
+def formatHTMLResponse(data):
+    return """
+    <html>
+      <body>
+        <pre>
+          <code>
+          {}
+          </code>
+        </pre>
+      </body>
+    </html>
+    """.format(json.dumps(data, indent=4))
+
+def formatJSONResponse(data):
     return json.dumps(data)
-    # return """<html>
-    #           <body>
-    #           <pre>
-    #           <code>
-    #           {}
-    #           </code>
-    #           </pre>
-    #           </body>
-    #           </html>""".format(str(json.dumps(data, indent=4)))
