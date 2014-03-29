@@ -12,4 +12,9 @@ class APIInterface(object):
     def buildQuery(self, paramDict):
         mergedDict = copy(self.defaultDict)
         mergedDict.update(paramDict)
-        return self.baseURL + urlencode(mergedDict)
+        base = self.baseURL
+        if '_baseURL' in mergedDict:
+            base = mergedDict['_baseURL']
+            del mergedDict['_baseURL']
+        print(base + urlencode(mergedDict))
+        return base + urlencode(mergedDict)

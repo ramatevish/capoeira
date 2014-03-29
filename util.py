@@ -1,5 +1,4 @@
 import sys
-import urllib
 import json
 
 
@@ -14,13 +13,6 @@ def printMessage(message):
         print(pr)
         return response
     return func
-
-
-def cleanString(string):
-    try:
-        return urllib.quote_plus(string)
-    except:
-        return ''
 
 
 def tee(inp):
@@ -60,6 +52,7 @@ def formatHTMLResponse(data):
       </body>
     </html>
     """.format(json.dumps(data, indent=4))
+
 
 def formatJSONResponse(data):
     return json.dumps(data)
