@@ -10,6 +10,7 @@ from twisted.python import log
 
 from util import formatJSONResponse, formatHTMLResponse
 from apiservice import APIService
+from songkick import SongkickResponse
 
 
 class CapoeiraAPIService(APIService):
@@ -35,19 +36,23 @@ class CapoeiraAPIService(APIService):
         Make a call to Songkick, and return the metroarea id of the first city returned
         """
         args = self._unwrapArgs(request)
+        if 'location' not in args:
+            returnValue('sk:26330')
         response = yield self.songkickService.songkickLocationByName(name=args['location'])
-        returnValue('sk:' + str(response['resultsPage']['results']['location'][0]['metroArea']['id']))
+        response = SongkickResponse(response)
+        if response.success and len(response.results) > 0:
+            returnValue('sk:' + str(response.results['location'][0]['metroArea']['id']))
+        returnValue('sk:26330')
 
     @inlineCallbacks
     def eventsBySimilarQuery(self, request, fmFn):
         args = self._unwrapArgs(request)
-        location = 'sk:26330'
-        if 'location' in args:
-            try:
-                location = yield self.locationQuery(request)
-            except Exception as e:
-                log.err(e)
-            del args['location']
+        try:
+            location = yield self.locationQuery(request)
+            if 'location' in args:
+                del args['location']
+        except Exception as e:
+            log.err(e)
 
         response = yield fmFn(**args)
 

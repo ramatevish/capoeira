@@ -2,6 +2,30 @@ import datetime
 from apiservice import APIService
 
 
+class SongkickResponse(object):
+
+    def __init__(self, response):
+        self._response = response
+        self._status = response['resultsPage']['status']
+        if self._status != 'ok':
+            self._message = response['resultsPage']['error']['message']
+        else:
+            self._message = ""
+            self._results = response['resultsPage']['results']
+
+    @property
+    def success(self):
+        return self._status == 'ok'
+
+    @property
+    def message(self):
+        return self._message
+
+    @property
+    def results(self):
+        return self._results
+
+
 class SongkickAPIService(APIService):
 
     def __init__(self, apiKey, *args, **kwargs):
