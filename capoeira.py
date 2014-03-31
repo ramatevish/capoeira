@@ -1,139 +1,70 @@
 from __future__ import print_function
 
-from twisted.application import service
-from twisted.internet.defer import DeferredList, inlineCallbacks, returnValue
-from twisted.web.client import getPage
 from twisted.web.resource import Resource
-from twisted.web.server import Site, NOT_DONE_YET
-from twisted.python import log
-
-from lastfm import LastFMInterface
-from songkick import SongkickInterface
-from util import unwrapArgs, formatJSONResponse, formatHTMLResponse
+from twisted.web.server import NOT_DONE_YET
+from util import formatJSONResponse, formatHTMLResponse
 from negotiator import ContentNegotiator, AcceptParameters, ContentType, Language
 
-import json
-import os
-import pickle
 import urllib
-
-try:
-    from config import LASTFM_API_KEY, SONGKICK_API_KEY
-except ImportError:
-    LASTFM_API_KEY = os.environ['LASTFM_API_KEY']
-    SONGKICK_API_KEY = os.environ['SONGKICK_API_KEY']
-
-from datetime import timedelta
-from datetime import datetime
-from collections import namedtuple
-import atexit
+from twisted.internet.defer import inlineCallbacks, returnValue, DeferredList
+from twisted.python import log
+from apiservice import APIService
 
 
-CacheEntry = namedtuple("CacheEntry", ["response", "interface", "timestamp"])
-"""CacheEntry is a named tuple containing a response field, which stores the
-remote API server's response, an interface field, containing which API
-interface was queried, and a timestamp field which contains the time the
-response was recieved"""
+class CapoeiraAPIService(APIService):
 
+    def __init__(self, lastfmService, songkickService, *args, **kwargs):
+        APIService.__init__(self, *args, **kwargs)
+        self.lastfmService = lastfmService
+        self.songkickService = songkickService
 
-class CapoeiraService(service.Service):
+    # /capoeira/events/similar/artist
+    def capoeiraSimilarByArtistQuery(self, request):
+        response = self.eventsBySimilarQuery(request, self.lastfmService.lastFMArtistSimilar)
+        return response
 
-    def __init__(self, enableCache=False):
-        self.lastFMInterface = LastFMInterface(LASTFM_API_KEY)
-        self.songkickInterface = SongkickInterface(SONGKICK_API_KEY)
-
-        self.enableCache = False
-        if enableCache:  # load cache if it exists, else create empty dict
-            self.enableCache = True
-            if os.path.exists('./cache'):
-                cacheFile = open('./cache')
-                self.cache = pickle.load(cacheFile)
-                cacheFile.close()
-            else:
-                self.cache = dict()
-            atexit.register(lambda: pickle.dump(self.cache, open('./cache', 'w')))
-
-    def addToCache(self, queryString, interface, response):
-        """
-        addToCache adds CacheEntry namedtuples to the cache, replacing
-        currently existing cache entries if the exist
-        """
-        if queryString in self.cache:
-            print("deleting {} from cache".format(queryString))
-            del self.cache[queryString]
-        print("adding {} to cache".format(queryString))
-        self.cache[queryString] = CacheEntry(response,
-                                             interface,
-                                             datetime.now())
+    # /capoeira/events/similar/track
+    def capoeiraSimilarByTrackQuery(self, request):
+        response = self.eventsBySimilarQuery(request, self.lastfmService.lastFMTrackSimilar)
         return response
 
     @inlineCallbacks
-    def deferredQuery(self, interface, paramDict):
-        """
-        deferredQuery constructs API calls via implemented API interfaces,
-        taking care of loading responses and caching, as well as
-        optionally passing the results to a consuming callback function
-        """
-        queryString = interface.buildQuery(paramDict)
-
-        # if we have a recent cached version, echo and consume it
-        if self.enableCache and (queryString in self.cache) and (self.cache[queryString].timestamp
-                                                                 + timedelta(hours=24)) > datetime.now():
-            response = self.cache[queryString].response
-            parsed = json.loads(response)
-        else:  # otherwise, fetch, load it, cache it, and consume it
-            try:
-                response = yield getPage(queryString)
-            except Exception as e:
-                log.err("Query to {} failed: {} : {}".format(queryString, e.args, e.message))
-            parsed = json.loads(response)
-            if self.enableCache:  # order matters - don't add to cache if not JSON response
-                self.addToCache(queryString, interface, response)
-        returnValue(parsed)
-
-    def lastFMQuery(self, args, fmFn):
-        return self.deferredQuery(self.lastFMInterface, fmFn(**args))
-
-    def songkickQuery(self, args, skFn):
-        return self.deferredQuery(self.songkickInterface, skFn(**args))
-
-    @inlineCallbacks
-    def locationQuery(self, location):
+    def locationQuery(self, request):
         """
         Make a call to Songkick, and return the metroarea id of the first city returned
         """
-        locationResponse = yield self.deferredQuery(self.songkickInterface,
-                                                    self.songkickInterface.locationByName(name=location))
-        returnValue('sk:' + str(locationResponse['resultsPage']['results']['location'][0]['metroArea']['id']))
+        args = self._unwrapArgs(request)
+        response = yield self.songkickService.songkickLocationByName(name=args['location'])
+        returnValue('sk:' + str(response['resultsPage']['results']['location'][0]['metroArea']['id']))
 
     @inlineCallbacks
-    def eventsBySimilarQuery(self, args, fmFn):
+    def eventsBySimilarQuery(self, request, fmFn):
+        args = self._unwrapArgs(request)
         location = 'sk:26330'
         if 'location' in args:
             try:
-                location = yield self.locationQuery(args['location'])
+                location = yield self.locationQuery(request)
             except Exception as e:
                 log.err(e)
             del args['location']
 
-        response = yield self.deferredQuery(self.lastFMInterface, fmFn(**args))
+        response = yield fmFn(**args)
 
         # build list of escaped similar artist names
-
         artistNameList = []
         for index in range(len(response['similarartists']['artist'])):
             try:
                 artistNameList.append(urllib.quote_plus(response['similarartists']['artist'][index]['name']))
             except KeyError:
+                # we get a weird byte back occasionally, instead of a dict
                 pass
             except Exception as e:
                 log.err(e)
 
         # create deferred list of songkick upcoming event queries, fire off all our songkick API queries
         try:
-            similarArtistList = yield DeferredList([self.deferredQuery(self.songkickInterface,
-                                                                       self.songkickInterface.upcomingEvents(artistName,
-                                                                                                             location=location))
+            similarArtistList = yield DeferredList([self.songkickService.songkickUpcomingEvents(artistName,
+                                                                                                location=location)
                                                     for artistName in artistNameList])
         except Exception as e:
             log.err(e)
@@ -148,7 +79,10 @@ class CapoeiraService(service.Service):
         merged = []
         # check all of our songkick query responses, and add the results if the query was successful, and there are concerts
         results = [callbackResult[1]['resultsPage']['results'] for callbackResult in results if (callbackResult[0] and
-                                                                                                 len(callbackResult[1]['resultsPage']['results']) > 0)]
+                                                                                                 len(callbackResult[1][
+                                                                                                     'resultsPage'][
+                                                                                                     'results']) > 0)]
+        # remove duplicate events
         ids = set()
         for result in results:
             if 'event' in result:
@@ -158,65 +92,12 @@ class CapoeiraService(service.Service):
                         ids.add(event['id'])
         return merged
 
-    def _makeServiceRequest(self, request, apiQueryFn, apiFn):
-        return apiQueryFn(unwrapArgs(request.args), apiFn)
-
-    # /lastfm/artist/similar
-    def lastFMArtistSimilar(self, request):
-        response = self._makeServiceRequest(request,
-                                            self.lastFMQuery,
-                                            self.lastFMInterface.artistGetSimilar)
-        return response
-
-    # /lastfm/track/similar
-    def lastFMTrackSimilar(self, request):
-        response = self._makeServiceRequest(request,
-                                            self.lastFMQuery,
-                                            self.lastFMInterface.trackGetSimilar)
-        return response
-
-    # /lastfm/tag/similar
-    def lastFMTagSimilar(self, request):
-        response = self._makeServiceRequest(request,
-                                            self.lastFMQuery,
-                                            self.lastFMInterface.tagGetSimilar)
-        return response
-
-    # /songkick/events/upcoming
-    def songkickUpcomingEvents(self, request):
-        response = self._makeServiceRequest(request,
-                                            self.songkickQuery,
-                                            self.songkickInterface.upcomingEvents)
-        return response
-
-    # /songkick/location/name
-    def songkickLocationByName(self, request):
-        response = self._makeServiceRequest(request,
-                                            self.songkickQuery,
-                                            self.songkickInterface.locationByName)
-        return response
-
-    # /capoeira/events/similar/artist
-    def capoeiraSimilarByArtistQuery(self, request):
-        response = self.eventsBySimilarQuery(unwrapArgs(request.args), self.lastFMInterface.artistGetSimilar)
-        return response
-
-    # /capoeira/events/similar/track
-    def capoeiraSimilarByTrackQuery(self, request):
-        response = self.eventsBySimilarQuery(unwrapArgs(request.args), self.lastFMInterface.trackGetSimilar)
-        return response
-
 
 class CapoeiraResource(Resource):
     def __init__(self, service):
         Resource.__init__(self)
         self.service = service
         self.resources = {
-            '/lastfm/track/similar': self.service.lastFMTrackSimilar,
-            '/lastfm/artist/similar': self.service.lastFMArtistSimilar,
-            '/lastfm/tag/similar': self.service.lastFMTagSimilar,
-            '/songkick/events/upcoming': self.service.songkickUpcomingEvents,
-            '/songkick/location/name': self.service.songkickLocationByName,
             '/capoeira/events/similar/artist': self.service.capoeiraSimilarByArtistQuery,
             '/capoeira/events/similar/track': self.service.capoeiraSimilarByTrackQuery
         }
@@ -237,15 +118,18 @@ class CapoeiraResource(Resource):
         def d(_):
             request.write(renderFn(deferred.result))
             request.finish()
+
         return d
 
     def render_GET(self, request):
+        # try to find acceptable response format, else fail with 406
         acceptable = self.contentNegotiator.negotiate(request.getHeader('Accept'))
         if not acceptable:
             request.setResponseCode(406)
             return ""
-        else:
-            contentType = str(acceptable.content_type)
+
+        # get acceptable content type and associated render function
+        contentType = str(acceptable.content_type)
         renderFn = self.renderFns[contentType]
         request.setHeader("Content-Type", contentType)
         if request.path in self.resources:
@@ -253,18 +137,5 @@ class CapoeiraResource(Resource):
             d.addCallback(self._delayedRender(request, d, renderFn))
             return NOT_DONE_YET
         else:
+            # TODO: better handling of path not found
             return "{}"
-
-#
-# def main():
-#     capoeiraService = CapoeiraService(True)
-#     capoeiraService.startService()
-#
-#     from twisted.internet import reactor
-#
-#     factory = Site(CapoeiraResource(capoeiraService))
-#     reactor.listenTCP(8080, factory)
-#     reactor.run()
-#
-# if __name__ == '__main__':
-#     main()

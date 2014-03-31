@@ -1,30 +1,50 @@
-from api import APIInterface
+from apiservice import APIService
 
 
-class LastFMInterface(APIInterface):
+class LastFMAPIService(APIService):
 
-    def __init__(self, apiKey):
-        self.apiKey = apiKey
-        self.baseURL = "http://ws.audioscrobbler.com/2.0/?"
-        self.defaultDict = {'api_key': self.apiKey,
-                            'format': 'json'}
+    def __init__(self, apiKey, *args, **kwargs):
+        APIService.__init__(self, *args, **kwargs)
+        self._apiKey = apiKey
+        self.defaults = {'api_key': self._apiKey,
+                         'format': 'json',
+                         '_baseURL': "http://ws.audioscrobbler.com/2.0/?"}
 
-    def artistGetSimilar(self, artist, limit=1000, autocorrect=0):
-        paramDict = {'method': 'artist.getsimilar',
-                     'artist': artist,
-                     'limit': limit,
-                     'autocorrect': autocorrect}
-        return paramDict
+    # BEGIN DEFINE API CALLS
 
-    def trackGetSimilar(self, track, artist, limit=1000, autocorrect=0):
-        paramDict = {'method': 'track.getsimilar',
-                     'track': track,
-                     'artist': artist,
-                     'limit': limit,
-                     'autocorrect': autocorrect}
-        return paramDict
+    def _artistGetSimilar(self, artist, limit=1000, autocorrect=0):
+        params = {'method': 'artist.getsimilar',
+                  'artist': artist,
+                  'limit': limit,
+                  'autocorrect': autocorrect}
+        return params
 
-    def tagGetSimilar(self, tag):
-        paramDict = {'method': 'tag.getsimilar',
-                     'tag': tag}
-        return paramDict
+    def _trackGetSimilar(self, track, artist, limit=1000, autocorrect=0):
+        params = {'method': 'track.getsimilar',
+                  'track': track,
+                  'artist': artist,
+                  'limit': limit,
+                  'autocorrect': autocorrect}
+        return params
+
+    def _tagGetSimilar(self, tag):
+        params = {'method': 'tag.getsimilar',
+                  'tag': tag}
+        return params
+
+    # END DEFINE API CALLS
+
+    # /lastfm/artist/similar
+    def lastFMArtistSimilar(self, *args, **kwargs):
+        response = self._deferredQuery(self._artistGetSimilar(*args, **kwargs))
+        return response
+
+    # /lastfm/track/similar
+    def lastFMTrackSimilar(self, *args, **kwargs):
+        response = self._deferredQuery(self._trackGetSimilar(*args, **kwargs))
+        return response
+
+    # /lastfm/tag/similar
+    def lastFMTagSimilar(self, *args, **kwargs):
+        response = self._deferredQuery(self._tagGetSimilar(*args, **kwargs))
+        return response
