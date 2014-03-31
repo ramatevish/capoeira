@@ -1,13 +1,13 @@
 from twisted.application import internet, service
 from twisted.web.server import Site
 
-from lastfm import LastFMAPIService
-from songkick import SongkickAPIService
-from capoeira import CapoeiraAPIService
-from capoeira import CapoeiraResource
+from capoeira.lastfm import LastFMAPIService
+from capoeira.songkick import SongkickAPIService
+from capoeira.capoeira import CapoeiraAPIService
+from capoeira.capoeira import CapoeiraResource
 
 import memcache
-from mocks import DictionaryCache
+from capoeira.mocks import DictionaryCache
 
 # try to load in key values from ENV, falling back to config.py
 import os
@@ -23,7 +23,7 @@ for key, keyType in [('LASTFM_API_KEY', 'str'),
         print(key)
     except KeyError as e:
         try:
-            exec ('from config import {}'.format(key))
+            exec ('from capoeira.config import {}'.format(key))
         except ImportError as e:
             sys.stderr("Key {} is not defined in in ENV or config.py. Exiting ...")
             sys.exit(1)
@@ -33,15 +33,15 @@ apiService = service.MultiService()
 apiService.setServiceParent(application)
 
 try:
-    memcacheClient = memcache.Client(["127.0.0.1:11211"], server_max_key_length=1024)
+    cache = memcache.Client(["127.0.0.1:11211"], server_max_key_length=1024)
 except Exception as e:
-    memcacheClient = DictionaryCache()
+    cache = DictionaryCache()
 
-lastfmService = LastFMAPIService(LASTFM_API_KEY, memcacheClient=memcacheClient)
+lastfmService = LastFMAPIService(LASTFM_API_KEY, memcacheClient=cache)
 lastfmService.setServiceParent(apiService)
-songkickService = SongkickAPIService(SONGKICK_API_KEY, memcacheClient=memcacheClient)
+songkickService = SongkickAPIService(SONGKICK_API_KEY, memcacheClient=cache)
 songkickService.setServiceParent(apiService)
-capoeiraService = CapoeiraAPIService(songkickService=songkickService, lastfmService=lastfmService, memcacheClient=memcacheClient)
+capoeiraService = CapoeiraAPIService(songkickService=songkickService, lastfmService=lastfmService, memcacheClient=cache)
 songkickService.setServiceParent(apiService)
 
 site = Site(CapoeiraResource(capoeiraService))

@@ -1,13 +1,14 @@
 from __future__ import print_function
 
+import urllib
+
 from twisted.web.resource import Resource
 from twisted.web.server import NOT_DONE_YET
-from util import formatJSONResponse, formatHTMLResponse
 from negotiator import ContentNegotiator, AcceptParameters, ContentType, Language
-
-import urllib
 from twisted.internet.defer import inlineCallbacks, returnValue, DeferredList
 from twisted.python import log
+
+from util import formatJSONResponse, formatHTMLResponse
 from apiservice import APIService
 
 
