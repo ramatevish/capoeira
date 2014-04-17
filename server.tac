@@ -23,9 +23,9 @@ for key, keyType in [('LASTFM_API_KEY', 'str'),
         print(key)
     except KeyError as e:
         try:
-            exec ('from capoeira.config import {}'.format(key))
+            exec('from capoeira.config import {}'.format(key))
         except ImportError as e:
-            sys.stderr("Key {} is not defined in in ENV or config.py. Exiting ...")
+            sys.stderr.write("Key {} is not defined in in ENV or config.py. Exiting ...".format(key))
             sys.exit(1)
 
 application = service.Application("api-service")
